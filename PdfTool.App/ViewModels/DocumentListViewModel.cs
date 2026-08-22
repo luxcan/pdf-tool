@@ -50,6 +50,12 @@ internal sealed partial class DocumentListViewModel : ObservableObject
     /// <summary>Entry point for the Add button, dropped files and command-line arguments alike.</summary>
     public async Task AddFilesAsync(IEnumerable<string> filePaths)
     {
+        // The Add button honours the lock through CanModify, but a file dropped on the window
+        // reaches this directly. An operation is meant to run against a list that holds still, and
+        // on the Merge tab a list that moves underneath one throws the page choices away with it.
+        if (IsLocked)
+            return;
+
         var newPaths = filePaths
             .Where(path => Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
             .Where(path => Documents.All(d => !string.Equals(d.FilePath, path, StringComparison.OrdinalIgnoreCase)))

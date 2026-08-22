@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -64,6 +65,12 @@ internal sealed partial class MainViewModel : ObservableObject
         MergeFiles.Changed += (_, _) => OnActiveListChanged();
         CompressFiles.Changed += (_, _) => OnActiveListChanged();
 
+        // Deliberately the collection and not Changed: Changed also fires when the list is locked
+        // and unlocked, which happens at the start of the very merge that is consuming the page
+        // choices. Only an actual change of contents may disturb them.
+        MergeFiles.Documents.CollectionChanged += OnMergeDocumentsChanged;
+        MergeFiles.PropertyChanged += OnMergeFilesPropertyChanged;
+
         // The split settings are only meaningful against a document, so they are worked out again
         // whenever the list changes as well as whenever a setting does.
         SplitFiles.Changed += (_, _) =>
@@ -84,8 +91,32 @@ internal sealed partial class MainViewModel : ObservableObject
 
     public IReadOnlyList<CompressionPresetOption> CompressionPresets => CompressionPresetOption.All;
 
-    /// <summary>Pages built from the merge list when the user opens the page picker.</summary>
+    /// <summary>
+    /// Pages built from the merge list when the user opens the page picker, and the sole authority
+    /// on what a merge writes once it holds choices the file list cannot express. It is kept in step
+    /// with the file list rather than rebuilt on each visit, so closing the picker no longer throws
+    /// away the arrangement made in it.
+    /// </summary>
     public ObservableCollection<PageViewModel> Pages { get; } = [];
+
+    /// <summary>
+    /// Whether the picker holds something the file list cannot say for itself - a page moved,
+    /// rotated, or left out. Worked out by comparing the two rather than recorded in a flag: a flag
+    /// is a second thing that can disagree with the collection, which is the fault this exists to
+    /// close. Opening the picker and closing it again therefore leaves nothing behind.
+    /// </summary>
+    public bool HasPageArrangement => Pages.Count > 0 && !MatchesFileOrder();
+
+    /// <summary>How many pages the next merge would write, from whichever source currently speaks.</summary>
+    public int MergeInputCount => HasPageArrangement ? SelectedPageCount : MergeFiles.TotalPageCount;
+
+    /// <summary>
+    /// What the merge button says. A button that reads "Merge all pages" while a page arrangement
+    /// is standing behind it would be describing the one thing it is not about to do.
+    /// </summary>
+    public string MergeButtonLabel => HasPageArrangement
+        ? $"Merge {MergeInputCount} chosen page(s)"
+        : "Merge all pages";
 
     /// <summary>Tile sizes the page picker offers.</summary>
     public IReadOnlyList<PageZoomOption> PageZoomLevels { get; } = PageZoomOption.All;
@@ -138,8 +169,7 @@ internal sealed partial class MainViewModel : ObservableObject
     private bool _isChoosingPages;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(MergeAllCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MergeSelectedPagesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MergeCommand))]
     [NotifyCanExecuteChangedFor(nameof(ChoosePagesCommand))]
     [NotifyCanExecuteChangedFor(nameof(SplitCommand))]
     [NotifyCanExecuteChangedFor(nameof(CompressCommand))]
@@ -179,30 +209,42 @@ internal sealed partial class MainViewModel : ObservableObject
 
     // ===================================== Merge =====================================
 
-    /// <summary>Mode 1: every page of every file, in file order.</summary>
-    [RelayCommand(CanExecute = nameof(CanMergeAll))]
-    private Task MergeAllAsync()
-    {
-        var pages = MergeFiles.Documents
-            .SelectMany(document => Enumerable
-                .Range(0, document.PageCount)
-                .Select(index => new PageRef(document.FilePath, index)))
-            .ToList();
+    /// <summary>
+    /// The one place a merge input is produced. With an arrangement held it is that arrangement,
+    /// verbatim; without one it is every page of every file in list order. Nothing else builds
+    /// PageRefs, so no screen can merge in an order the user is not looking at.
+    /// </summary>
+    internal IReadOnlyList<PageRef> BuildMergeInput() => HasPageArrangement
+        ? [.. Pages.Where(page => page.IsSelected).Select(page => page.ToPageRef())]
+        : [.. MergeFiles.Documents.SelectMany(document => Enumerable
+            .Range(0, document.PageCount)
+            .Select(index => new PageRef(document.FilePath, index)))];
 
-        return MergeAsync(pages);
-    }
-
-    /// <summary>Mode 2: whatever survived the page picker, in the order shown there.</summary>
-    [RelayCommand(CanExecute = nameof(CanMergeSelectedPages))]
-    private Task MergeSelectedPagesAsync() =>
-        MergeAsync([.. Pages.Where(page => page.IsSelected).Select(page => page.ToPageRef())]);
+    [RelayCommand(CanExecute = nameof(CanMerge))]
+    private Task MergeAsync() => WriteMergedFileAsync(BuildMergeInput());
 
     [RelayCommand(CanExecute = nameof(CanChoosePages))]
     private void ChoosePages()
     {
-        BuildPages();
+        // Only when there is nothing to show. Rebuilding here is what used to discard an arrangement
+        // the moment the user came back to look at it again.
+        if (Pages.Count == 0)
+            BuildPages();
+
         IsChoosingPages = true;
-        StatusMessage = "Deselect any pages you do not want, then merge.";
+        StatusMessage = "Reorder, rotate or deselect pages, then merge.";
+    }
+
+    /// <summary>
+    /// Puts the pages back the way the file list has them: original order, none left out, none
+    /// turned. The only way back to a plain merge once the picker has been used for something.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasPageArrangement))]
+    private void ResetPages()
+    {
+        DiscardPages();
+        BuildPages();
+        StatusMessage = "Page choices reset to the file order.";
     }
 
     [RelayCommand]
@@ -210,7 +252,11 @@ internal sealed partial class MainViewModel : ObservableObject
     {
         CancelThumbnailLoading();
         IsChoosingPages = false;
-        StatusMessage = DescribeActiveList();
+
+        // A merge started from inside the picker keeps reporting its progress; leaving the picker
+        // while it runs must not paint over it.
+        if (!IsBusy)
+            StatusMessage = DescribeActiveList();
     }
 
     [RelayCommand]
@@ -498,7 +544,7 @@ internal sealed partial class MainViewModel : ObservableObject
         });
     }
 
-    private async Task MergeAsync(IReadOnlyList<PageRef> pages)
+    private async Task WriteMergedFileAsync(IReadOnlyList<PageRef> pages)
     {
         if (pages.Count == 0)
         {
@@ -735,15 +781,9 @@ internal sealed partial class MainViewModel : ObservableObject
         IReadOnlyList<CompressionResult> results) =>
         (results.Sum(result => result.OriginalBytes), results.Sum(result => result.CompressedBytes));
 
+    /// <summary>Fills an empty page list from the file list, in file order, with nothing left out.</summary>
     private void BuildPages()
     {
-        CancelThumbnailLoading();
-
-        foreach (var page in Pages)
-            page.PropertyChanged -= OnPagePropertyChanged;
-
-        Pages.Clear();
-
         foreach (var document in MergeFiles.Documents)
         {
             for (var index = 0; index < document.PageCount; index++)
@@ -758,16 +798,124 @@ internal sealed partial class MainViewModel : ObservableObject
         UpdateSelectedPageCount();
     }
 
+    /// <summary>
+    /// Empties the page list and lets go of everything hanging off it - the subscriptions, the
+    /// selection, and the thumbnails, which are decoded bitmaps and worth releasing.
+    /// </summary>
+    private void DiscardPages()
+    {
+        if (Pages.Count == 0)
+            return;
+
+        CancelThumbnailLoading();
+
+        foreach (var page in Pages)
+            page.PropertyChanged -= OnPagePropertyChanged;
+
+        // Before the clear: nothing may be left pointing into an emptied collection.
+        SelectedPage = null;
+        Pages.Clear();
+        UpdateSelectedPageCount();
+    }
+
+    /// <summary>
+    /// A file moving does not disturb a page arrangement - the arrangement already says where every
+    /// page goes, and the order it was built from stopped having a say the moment it existed. Adding
+    /// or removing one does: there would be pages in the merge the picker never showed, or pages in
+    /// the picker with no file behind them. Those choices are dropped, and the drop is announced.
+    /// </summary>
+    private void OnMergeDocumentsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Move || Pages.Count == 0)
+            return;
+
+        var wasArranged = HasPageArrangement;
+
+        DiscardPages();
+
+        // Files arrive one at a time, so a multi-file drop waits for the last of them rather than
+        // rebuilding the grid - and throwing its thumbnails away - once per file.
+        if (IsChoosingPages && !MergeFiles.IsAdding)
+            BuildPages();
+        else if (wasArranged && !IsBusy && !IsChoosingPages)
+            StatusMessage = "The file list changed, so the page choices went back to the file order.";
+
+        NotifyMergeInputChanged();
+    }
+
+    private void OnMergeFilesPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DocumentListViewModel.IsAdding)
+            && !MergeFiles.IsAdding
+            && IsChoosingPages
+            && Pages.Count == 0)
+        {
+            BuildPages();
+        }
+    }
+
     private void OnPagePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // Rotation counts as much as selection: both are choices the file list cannot express, and
+        // both decide whether an arrangement is being held.
         if (e.PropertyName == nameof(PageViewModel.IsSelected))
             UpdateSelectedPageCount();
+        else if (e.PropertyName == nameof(PageViewModel.Rotation))
+            NotifyMergeInputChanged();
     }
 
     private void UpdateSelectedPageCount()
     {
         SelectedPageCount = Pages.Count(page => page.IsSelected);
-        MergeSelectedPagesCommand.NotifyCanExecuteChanged();
+        NotifyMergeInputChanged();
+    }
+
+    /// <summary>
+    /// Everything the merge button reads is worked out from the page list rather than stored, so
+    /// anything that moves, turns or unticks a page has to say that those answers have changed.
+    /// </summary>
+    private void NotifyMergeInputChanged()
+    {
+        OnPropertyChanged(nameof(HasPageArrangement));
+        OnPropertyChanged(nameof(MergeInputCount));
+        OnPropertyChanged(nameof(MergeButtonLabel));
+
+        MergeCommand.NotifyCanExecuteChanged();
+        ResetPagesCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Whether the page list still says exactly what the file list says: every page of every file,
+    /// in order, all kept, none turned. This is the comparison behind <see cref="HasPageArrangement"/>.
+    /// </summary>
+    private bool MatchesFileOrder()
+    {
+        var index = 0;
+
+        foreach (var document in MergeFiles.Documents)
+        {
+            var path = document.FilePath;
+
+            for (var page = 0; page < document.PageCount; page++)
+            {
+                if (index >= Pages.Count)
+                    return false;
+
+                var candidate = Pages[index++];
+
+                // Cheapest tests first: the comparison runs on every keystroke of a select-all, and
+                // only a page that matches in every other respect is worth comparing paths for.
+                if (!candidate.IsSelected
+                    || candidate.Rotation != 0
+                    || candidate.PageIndex != page
+                    || !string.Equals(candidate.SourcePath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return index == Pages.Count;
     }
 
     private void SetAllPagesSelected(bool isSelected)
@@ -802,6 +950,10 @@ internal sealed partial class MainViewModel : ObservableObject
     {
         MovePageEarlierCommand.NotifyCanExecuteChanged();
         MovePageLaterCommand.NotifyCanExecuteChanged();
+
+        // Moving a page is what turns a plain list into an arrangement, so the merge button has to
+        // hear that both its label and its answer may have changed.
+        NotifyMergeInputChanged();
     }
 
     private void CancelThumbnailLoading()
@@ -831,9 +983,12 @@ internal sealed partial class MainViewModel : ObservableObject
 
     private void OnActiveListChanged()
     {
-        MergeAllCommand.NotifyCanExecuteChanged();
+        MergeCommand.NotifyCanExecuteChanged();
         ChoosePagesCommand.NotifyCanExecuteChanged();
         CompressCommand.NotifyCanExecuteChanged();
+
+        // The file list is half of what the merge button counts when no arrangement is held.
+        NotifyMergeInputChanged();
 
         if (!IsBusy && !IsChoosingPages)
             StatusMessage = DescribeActiveList();
@@ -862,11 +1017,9 @@ internal sealed partial class MainViewModel : ObservableObject
 
     private bool CanMovePageLater() => SelectedPage is not null && Pages.IndexOf(SelectedPage) < Pages.Count - 1;
 
-    private bool CanMergeAll() => !IsBusy && MergeFiles.HasDocuments;
-
     private bool CanChoosePages() => !IsBusy && MergeFiles.HasDocuments;
 
-    private bool CanMergeSelectedPages() => !IsBusy && SelectedPageCount > 0;
+    private bool CanMerge() => !IsBusy && MergeInputCount > 0;
 
     private bool CanCompress() => !IsBusy && CompressFiles.HasDocuments;
 }

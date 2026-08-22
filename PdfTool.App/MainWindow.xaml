@@ -56,6 +56,10 @@
                             <Button Content="Invert"
                                     Style="{StaticResource SecondaryButton}"
                                     Command="{Binding InvertPageSelectionCommand}" />
+                            <Button Content="Reset"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding ResetPagesCommand}"
+                                    ToolTip="Put the pages back in file order, all included and none rotated." />
 
                             <Rectangle Style="{StaticResource ToolbarSeparator}" />
 
@@ -86,10 +90,10 @@
                                 HorizontalAlignment="Right"
                                 MinWidth="150"
                                 Margin="0"
-                                Command="{Binding MergeSelectedPagesCommand}">
+                                Command="{Binding MergeCommand}">
                             <TextBlock>
                                 <Run Text="Merge" />
-                                <Run Text="{Binding SelectedPageCount, Mode=OneWay}" />
+                                <Run Text="{Binding MergeInputCount, Mode=OneWay}" />
                                 <Run Text="page(s)" />
                             </TextBlock>
                         </Button>
@@ -101,8 +105,7 @@
                         Margin="0,0,0,10"
                         Label="Compress merged output"
                         IsChecked="{Binding CompressMergedOutput}"
-                        ToolTip="Shrink the merged file once the pages have been combined."
-                        Visibility="{Binding IsChoosingPages, Converter={StaticResource InverseBoolToVisibility}}" />
+                        ToolTip="Shrink the merged file once the pages have been combined." />
 
                     <!-- File list -->
                     <controls:DocumentListView Grid.Row="2"
@@ -121,11 +124,14 @@
                                         Command="{Binding DataContext.ChoosePagesCommand,
                                                  RelativeSource={RelativeSource AncestorType=Window}}"
                                         ToolTip="Pick exactly which pages go into the merged file." />
-                                <Button Content="Merge all pages"
+                                <!-- Says which of the two it is about to do: the file list in order,
+                                     or the arrangement the page picker is holding. -->
+                                <Button Content="{Binding DataContext.MergeButtonLabel,
+                                                 RelativeSource={RelativeSource AncestorType=Window}}"
                                         Style="{StaticResource PrimaryButton}"
                                         MinWidth="126"
                                         Margin="0"
-                                        Command="{Binding DataContext.MergeAllCommand,
+                                        Command="{Binding DataContext.MergeCommand,
                                                  RelativeSource={RelativeSource AncestorType=Window}}" />
                             </StackPanel>
                         </controls:DocumentListView.ToolbarContent>

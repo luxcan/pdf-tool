@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using PdfTool.App.Behaviors;
+using PdfTool.App.Controls;
 using PdfTool.App.ViewModels;
 using PdfTool.Core.Compression;
 using PdfTool.Core.Documents;
@@ -430,11 +431,11 @@ public sealed class MainWindowSmokeTests(WpfContext wpf)
 
                 viewModel.SelectNoPagesCommand.Execute(null);
                 Assert.Equal(0, viewModel.SelectedPageCount);
-                Assert.False(viewModel.MergeSelectedPagesCommand.CanExecute(null));
+                Assert.False(viewModel.MergeCommand.CanExecute(null));
 
                 viewModel.InvertPageSelectionCommand.Execute(null);
                 Assert.Equal(6, viewModel.SelectedPageCount);
-                Assert.True(viewModel.MergeSelectedPagesCommand.CanExecute(null));
+                Assert.True(viewModel.MergeCommand.CanExecute(null));
             }
             finally
             {
@@ -817,7 +818,7 @@ public sealed class MainWindowSmokeTests(WpfContext wpf)
 
                 viewModel.MergeFiles.Documents.Add(Document("merge-me.pdf", pageCount: 4));
 
-                Assert.True(viewModel.MergeAllCommand.CanExecute(null));
+                Assert.True(viewModel.MergeCommand.CanExecute(null));
                 Assert.False(viewModel.CompressCommand.CanExecute(null));
                 Assert.Empty(viewModel.CompressFiles.Documents);
 
@@ -830,7 +831,7 @@ public sealed class MainWindowSmokeTests(WpfContext wpf)
 
                 Assert.Empty(viewModel.CompressFiles.Documents);
                 Assert.Single(viewModel.MergeFiles.Documents);
-                Assert.True(viewModel.MergeAllCommand.CanExecute(null));
+                Assert.True(viewModel.MergeCommand.CanExecute(null));
             }
             finally
             {
@@ -994,6 +995,325 @@ public sealed class MainWindowSmokeTests(WpfContext wpf)
             }
         }
     }
+
+    // ===================== The page arrangement surviving the picker =====================
+
+    /// <summary>
+    /// The reported fault, in full: pages dragged into an order, the picker closed, and the merge
+    /// started from the file list. The arrangement is what the user is looking at, so it is what the
+    /// merge has to write - the file order they deliberately moved away from is not an answer.
+    /// </summary>
+    [Fact]
+    public void PagesReorderedInThePicker_SurviveGoingBackToTheFileList()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 3));
+                viewModel.MergeFiles.Documents.Add(Document("b.pdf", pageCount: 2));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                Assert.False(viewModel.HasPageArrangement);
+
+                // a.pdf's first page to the back of the queue.
+                viewModel.ReorderPagesCommand.Execute(new ReorderRequest(0, 4));
+
+                Assert.True(viewModel.HasPageArrangement);
+
+                viewModel.BackToFilesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                var merged = viewModel.BuildMergeInput();
+
+                Assert.Equal(5, merged.Count);
+                Assert.Equal(new PageRef("b.pdf", 1), merged[3]);
+                Assert.Equal(new PageRef("a.pdf", 0), merged[4]);
+                Assert.Equal("Merge 5 chosen page(s)", viewModel.MergeButtonLabel);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Rotation and deselection are choices the file list cannot express either, and were being lost
+    /// by the same route as the ordering.
+    /// </summary>
+    [Fact]
+    public void RotationAndDeselection_SurviveGoingBackToTheFileList()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 4));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                viewModel.SelectedPage = viewModel.Pages[1];
+                viewModel.RotatePageCommand.Execute(null);
+                viewModel.Pages[3].IsSelected = false;
+
+                viewModel.BackToFilesCommand.Execute(null);
+
+                var merged = viewModel.BuildMergeInput();
+
+                Assert.Equal(3, merged.Count);
+                Assert.Equal(90, merged[1].Rotation);
+                Assert.DoesNotContain(merged, page => page.PageIndex == 3);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Opening the picker is not itself a choice. A user who looks at the previews and backs out has
+    /// arranged nothing, and must not be told they have - nor be offered a merge of "chosen" pages.
+    /// </summary>
+    [Fact]
+    public void OpeningThePickerAndChangingNothing_LeavesNoArrangementBehind()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 3));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+                viewModel.BackToFilesCommand.Execute(null);
+
+                Assert.False(viewModel.HasPageArrangement);
+                Assert.Equal("Merge all pages", viewModel.MergeButtonLabel);
+                Assert.Equal(3, viewModel.MergeInputCount);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>Coming back to the picker shows the arrangement, rather than building over it.</summary>
+    [Fact]
+    public void ReopeningThePicker_KeepsTheArrangementItWasLeftIn()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 4));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+                viewModel.ReorderPagesCommand.Execute(new ReorderRequest(0, 3));
+                viewModel.BackToFilesCommand.Execute(null);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                Assert.True(viewModel.HasPageArrangement);
+
+                // The first page was dragged to the back, and is still there.
+                Assert.Equal(0, viewModel.Pages[3].PageIndex);
+                Assert.Equal(1, viewModel.Pages[0].PageIndex);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Reordering the files is what the README teaches as the way to order a merge, and it must not
+    /// cost the user a page arrangement. The arrangement already says where every page goes, so the
+    /// list order it was built from has nothing left to say about it.
+    /// </summary>
+    [Fact]
+    public void MovingAFileInTheList_DoesNotDisturbThePageArrangement()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 2));
+                viewModel.MergeFiles.Documents.Add(Document("b.pdf", pageCount: 2));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+                viewModel.ReorderPagesCommand.Execute(new ReorderRequest(0, 3));
+                viewModel.BackToFilesCommand.Execute(null);
+
+                viewModel.MergeFiles.SelectedDocument = viewModel.MergeFiles.Documents[1];
+                viewModel.MergeFiles.MoveUpCommand.Execute(null);
+
+                Assert.True(viewModel.HasPageArrangement);
+                Assert.Equal(4, viewModel.BuildMergeInput().Count);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Adding or removing a file does disturb it - there would be pages in the merge the picker
+    /// never showed. The choices go, and the user is told rather than left to notice.
+    /// </summary>
+    [Fact]
+    public void ChangingWhichFilesAreListed_ClearsThePageChoicesAndSaysSo()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 2));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+                viewModel.ReorderPagesCommand.Execute(new ReorderRequest(0, 1));
+                viewModel.BackToFilesCommand.Execute(null);
+
+                Assert.True(viewModel.HasPageArrangement);
+
+                viewModel.MergeFiles.Documents.Add(Document("b.pdf", pageCount: 3));
+
+                Assert.False(viewModel.HasPageArrangement);
+                Assert.Contains("page choices", viewModel.StatusMessage);
+
+                // And the merge now covers both files, in file order.
+                Assert.Equal(5, viewModel.BuildMergeInput().Count);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>Reset is the only way back to file order once the picker has been used.</summary>
+    [Fact]
+    public void ResetPages_PutsThePagesBackInFileOrder()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 3));
+                ShowAndLayOut(window);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                Assert.False(viewModel.ResetPagesCommand.CanExecute(null));
+
+                viewModel.ReorderPagesCommand.Execute(new ReorderRequest(0, 2));
+                viewModel.Pages[0].IsSelected = false;
+
+                Assert.True(viewModel.ResetPagesCommand.CanExecute(null));
+
+                viewModel.ResetPagesCommand.Execute(null);
+
+                Assert.False(viewModel.HasPageArrangement);
+                Assert.Equal(3, viewModel.Pages.Count);
+                Assert.Equal(0, viewModel.Pages[0].PageIndex);
+                Assert.All(viewModel.Pages, page => Assert.True(page.IsSelected));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// The compress option is what sent the user back to the file list in the first place. It is on
+    /// the page picker too now, so arranging pages and compressing the result is one visit.
+    /// </summary>
+    [Fact]
+    public void CompressOption_IsOfferedOnThePagePickerAsWellAsTheFileList()
+    {
+        wpf.Invoke(() =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.Documents.Add(Document("a.pdf", pageCount: 2));
+                ShowAndLayOut(window);
+
+                var compress = FindVisualChildren<CompressOutputOption>(window)
+                    .Single(option => option.Label == "Compress merged output");
+
+                Assert.Equal(Visibility.Visible, compress.Visibility);
+
+                viewModel.ChoosePagesCommand.Execute(null);
+                ShowAndLayOut(window);
+
+                Assert.Equal(Visibility.Visible, compress.Visibility);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    /// <summary>
+    /// A file dropped on the window reaches the list directly rather than through the command, so
+    /// the lock an operation puts on the list has to be honoured there too - otherwise a merge in
+    /// progress can have its own source list changed underneath it.
+    /// </summary>
+    [Fact]
+    public Task AddingFiles_IsRefusedWhileTheListIsLocked() =>
+        wpf.InvokeAsync(async () =>
+        {
+            var (window, viewModel) = CreateWindow();
+
+            try
+            {
+                viewModel.MergeFiles.IsLocked = true;
+
+                await viewModel.MergeFiles.AddFilesAsync(["nowhere.pdf"]);
+
+                Assert.Empty(viewModel.MergeFiles.Documents);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
 
     private static Button SingleButton(DependencyObject window, string content) =>
         FindVisualChildren<Button>(window).Single(button => button.Content as string == content);
