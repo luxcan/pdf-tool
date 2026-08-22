@@ -1,0 +1,20 @@
+<Application x:Class="PdfTool.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:PdfTool.App.Converters">
+    <!-- No StartupUri: the window is created in App.OnStartup so its view model can be composed. -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Palette first, styles second: the styles name the palette's keys, and nothing
+                     else. Swapping the first line for a light dictionary exposing the same keys is
+                     the whole of what a second mode would take. -->
+                <ResourceDictionary Source="Themes/Precision.Dark.xaml" />
+                <ResourceDictionary Source="Themes/Controls.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+            <converters:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,441 @@
+<Window x:Class="PdfTool.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:behaviors="clr-namespace:PdfTool.App.Behaviors"
+        xmlns:controls="clr-namespace:PdfTool.App.Controls"
+        xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
+        Title="PDF Tool"
+        Height="740"
+        Width="1080"
+        MinHeight="520"
+        MinWidth="880"
+        AllowDrop="True"
+        Drop="OnFilesDropped"
+        DragOver="OnDragOver"
+        Background="{DynamicResource AppBackground}"
+        TextElement.Foreground="{DynamicResource TextPrimary}"
+        FontFamily="{DynamicResource AppFontFamily}"
+        FontSize="{DynamicResource FontSizeBody}"
+        TextOptions.TextRenderingMode="Grayscale"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TabControl Grid.Row="0" SelectedIndex="{Binding SelectedTabIndex}">
+
+            <!-- ============================ Merge ============================ -->
+            <TabItem Header="Merge">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Page picker toolbar, in place of the file list's own -->
+                    <Grid Grid.Row="0"
+                          Margin="0,0,0,10"
+                          Visibility="{Binding IsChoosingPages, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                            <Button Content="Back"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding BackToFilesCommand}" />
+
+                            <Rectangle Style="{StaticResource ToolbarSeparator}" />
+
+                            <Button Content="Select all"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding SelectAllPagesCommand}" />
+                            <Button Content="Select none"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding SelectNoPagesCommand}" />
+                            <Button Content="Invert"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding InvertPageSelectionCommand}" />
+
+                            <Rectangle Style="{StaticResource ToolbarSeparator}" />
+
+                            <Button Content="Rotate"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding RotatePageCommand}" />
+                            <Button Content="Move left"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding MovePageEarlierCommand}" />
+                            <Button Content="Move right"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding MovePageLaterCommand}" />
+
+                            <Rectangle Style="{StaticResource ToolbarSeparator}" />
+
+                            <TextBlock Text="Size"
+                                       Style="{StaticResource MutedText}"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0" />
+                            <ListBox Style="{StaticResource SegmentedSelector}"
+                                     VerticalAlignment="Center"
+                                     ItemsSource="{Binding PageZoomLevels}"
+                                     SelectedItem="{Binding SelectedPageZoom}"
+                                     ToolTip="How large the page previews are drawn. Holding Ctrl and turning the wheel over the pages does the same." />
+                        </StackPanel>
+
+                        <Button Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Right"
+                                MinWidth="150"
+                                Margin="0"
+                                Command="{Binding MergeSelectedPagesCommand}">
+                            <TextBlock>
+                                <Run Text="Merge" />
+                                <Run Text="{Binding SelectedPageCount, Mode=OneWay}" />
+                                <Run Text="page(s)" />
+                            </TextBlock>
+                        </Button>
+                    </Grid>
+
+                    <!-- Compress-on-merge option, with the quality it would use -->
+                    <controls:CompressOutputOption
+                        Grid.Row="1"
+                        Margin="0,0,0,10"
+                        Label="Compress merged output"
+                        IsChecked="{Binding CompressMergedOutput}"
+                        ToolTip="Shrink the merged file once the pages have been combined."
+                        Visibility="{Binding IsChoosingPages, Converter={StaticResource InverseBoolToVisibility}}" />
+
+                    <!-- File list -->
+                    <controls:DocumentListView Grid.Row="2"
+                                               DataContext="{Binding MergeFiles}"
+                                               ShowReorderButtons="True"
+                                               Visibility="{Binding DataContext.IsChoosingPages,
+                                                           RelativeSource={RelativeSource AncestorType=Window},
+                                                           Converter={StaticResource InverseBoolToVisibility}}">
+                        <!-- Hosted by the list, whose data context is the file list itself, so these
+                             reach back to the window's view model by name. -->
+                        <controls:DocumentListView.ToolbarContent>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Choose pages..."
+                                        Style="{StaticResource SecondaryButton}"
+                                        MinWidth="118"
+                                        Command="{Binding DataContext.ChoosePagesCommand,
+                                                 RelativeSource={RelativeSource AncestorType=Window}}"
+                                        ToolTip="Pick exactly which pages go into the merged file." />
+                                <Button Content="Merge all pages"
+                                        Style="{StaticResource PrimaryButton}"
+                                        MinWidth="126"
+                                        Margin="0"
+                                        Command="{Binding DataContext.MergeAllCommand,
+                                                 RelativeSource={RelativeSource AncestorType=Window}}" />
+                            </StackPanel>
+                        </controls:DocumentListView.ToolbarContent>
+                    </controls:DocumentListView>
+
+                    <!-- Page picker -->
+                    <ListBox Grid.Row="2"
+                             ItemsSource="{Binding Pages}"
+                             SelectedItem="{Binding SelectedPage}"
+                             Background="{DynamicResource SurfaceBackground}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.CanContentScroll="True"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             behaviors:DragReorder.Command="{Binding ReorderPagesCommand}"
+                             behaviors:WheelZoom.Command="{Binding StepPageZoomCommand}"
+                             Visibility="{Binding IsChoosingPages, Converter={StaticResource BoolToVisibility}}">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <vwp:VirtualizingWrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <!-- The attached command renders this page's thumbnail once its container
+                                     is realised, so pages never scrolled to are never rasterised. -->
+                                <Border Width="{Binding DataContext.SelectedPageZoom.TileWidth,
+                                                RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        Height="{Binding DataContext.SelectedPageZoom.TileHeight,
+                                                 RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        Margin="5"
+                                        Padding="8"
+                                        Background="{DynamicResource SurfaceBackground}"
+                                        BorderBrush="{DynamicResource ControlBorder}"
+                                        BorderThickness="1"
+                                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                                        behaviors:RealizedItem.Command="{Binding DataContext.LoadThumbnailCommand,
+                                                                         RelativeSource={RelativeSource AncestorType=ListBox}}">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid Grid.Row="0">
+                                            <TextBlock Text="Rendering..."
+                                                       Style="{StaticResource MutedText}"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Visibility="{Binding IsThumbnailLoading,
+                                                                   Converter={StaticResource BoolToVisibility}}" />
+
+                                            <Image Source="{Binding Thumbnail}"
+                                                   Stretch="Uniform"
+                                                   RenderOptions.BitmapScalingMode="HighQuality">
+                                                <Image.LayoutTransform>
+                                                    <RotateTransform Angle="{Binding Rotation}" />
+                                                </Image.LayoutTransform>
+                                            </Image>
+
+                                            <TextBlock Text="{Binding ThumbnailError}"
+                                                       Style="{StaticResource ErrorText}"
+                                                       TextWrapping="Wrap"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                                            <CheckBox IsChecked="{Binding IsSelected}">
+                                                <TextBlock>
+                                                    <Run Text="Page" />
+                                                    <Run Text="{Binding PageNumber, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </CheckBox>
+                                            <TextBlock Text="{Binding SourceFileName}"
+                                                       Style="{StaticResource MutedText}"
+                                                       Margin="23,2,0,0"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding SourcePath}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+
+            <!-- ============================= Split ============================= -->
+            <TabItem Header="Split">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Margin="0,0,0,10"
+                            Padding="10,7"
+                            Background="{DynamicResource SurfaceBackground}"
+                            BorderBrush="{DynamicResource ControlBorder}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Split by"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0" />
+
+                            <ListBox Grid.Column="1"
+                                     Style="{StaticResource SegmentedSelector}"
+                                     ItemsSource="{Binding SplitModes}"
+                                     SelectedItem="{Binding SelectedSplitMode}" />
+
+                            <!-- Only one of these applies at a time, and they occupy the same slot. -->
+                            <Grid Grid.Column="2" Margin="14,0,0,0">
+                                <StackPanel Orientation="Horizontal"
+                                            VerticalAlignment="Center"
+                                            Visibility="{Binding IsSplittingByRanges,
+                                                        Converter={StaticResource InverseBoolToVisibility}}">
+                                    <TextBlock Text="Pages per file"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,8,0" />
+                                    <TextBox Width="56"
+                                             VerticalAlignment="Center"
+                                             Text="{Binding PagesPerFileText, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="1 writes a file for every page." />
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal"
+                                            VerticalAlignment="Center"
+                                            Visibility="{Binding IsSplittingByRanges,
+                                                        Converter={StaticResource BoolToVisibility}}">
+                                    <TextBlock Text="Ranges"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,8,0" />
+                                    <TextBox Width="220"
+                                             VerticalAlignment="Center"
+                                             Text="{Binding PageRangesText, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="One file per range, in the order listed. For example: 1-3, 5, 8-10" />
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock Grid.Column="3"
+                                       Style="{StaticResource MutedText}"
+                                       VerticalAlignment="Center"
+                                       Margin="14,0,0,0"
+                                       TextTrimming="CharacterEllipsis"
+                                       Text="{Binding SplitSummary}" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Compress-on-split option, with the quality it would use -->
+                    <controls:CompressOutputOption
+                        Grid.Row="1"
+                        Margin="0,0,0,10"
+                        Label="Compress each part"
+                        IsChecked="{Binding CompressSplitParts}"
+                        ToolTip="Shrink every part once the pages have been written to it." />
+
+                    <controls:DocumentListView Grid.Row="2" DataContext="{Binding SplitFiles}">
+                        <controls:DocumentListView.ToolbarContent>
+                            <Button Content="Split"
+                                    Style="{StaticResource PrimaryButton}"
+                                    MinWidth="126"
+                                    Margin="0"
+                                    Command="{Binding DataContext.SplitCommand,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                    ToolTip="Write the parts into a folder you choose." />
+                        </controls:DocumentListView.ToolbarContent>
+                    </controls:DocumentListView>
+                </Grid>
+            </TabItem>
+
+            <!-- ============================ Compress ============================ -->
+            <TabItem Header="Compress">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Margin="0,0,0,10"
+                            Padding="10,7"
+                            Background="{DynamicResource SurfaceBackground}"
+                            BorderBrush="{DynamicResource ControlBorder}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="Quality"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0" />
+
+                            <ListBox Grid.Column="1"
+                                     Style="{StaticResource SegmentedSelector}"
+                                     ItemsSource="{Binding CompressionPresets}"
+                                     SelectedItem="{Binding SelectedCompressionPreset}" />
+
+                            <TextBlock Grid.Column="2"
+                                       Style="{StaticResource MutedText}"
+                                       VerticalAlignment="Center"
+                                       Margin="14,0,0,0"
+                                       TextTrimming="CharacterEllipsis"
+                                       Text="{Binding SelectedCompressionPreset.Description}" />
+                        </Grid>
+                    </Border>
+
+                    <controls:DocumentListView Grid.Row="1" DataContext="{Binding CompressFiles}">
+                        <controls:DocumentListView.ToolbarContent>
+                            <Button Content="Compress"
+                                    Style="{StaticResource PrimaryButton}"
+                                    MinWidth="126"
+                                    Margin="0"
+                                    Command="{Binding DataContext.CompressCommand,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                    ToolTip="Shrink each listed file into its own output." />
+                        </controls:DocumentListView.ToolbarContent>
+                    </controls:DocumentListView>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- ============================ Status bar ============================ -->
+        <Border Grid.Row="1"
+                Margin="0,12,0,0"
+                Padding="10,7"
+                Background="{DynamicResource StatusBarBackground}"
+                BorderBrush="{DynamicResource ControlBorder}"
+                BorderThickness="1"
+                CornerRadius="{DynamicResource ControlCornerRadius}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Hosted here rather than in a bar of its own: the strip is already there, and an
+                     application this size does not earn a row of chrome to hold one button. It sits
+                     at the far left because the other end of the strip belongs to whatever the tab
+                     is about to do, and About is never that. -->
+                <Button Grid.Column="0"
+                        Content="About"
+                        Style="{StaticResource SecondaryButton}"
+                        MinWidth="0"
+                        Padding="11,0,13,0"
+                        Margin="0,0,12,0"
+                        VerticalAlignment="Center"
+                        Click="OnAboutRequested"
+                        ToolTip="About PDF Tool">
+                    <Button.ContentTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE946;"
+                                           FontFamily="{DynamicResource IconFontFamily}"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource AccentBackground}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,7,0" />
+                                <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </Button.ContentTemplate>
+                </Button>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding StatusMessage}"
+                               Foreground="{DynamicResource StatusBarForeground}"
+                               TextTrimming="CharacterEllipsis" />
+                    <ProgressBar Margin="0,7,0,0"
+                                 Minimum="0"
+                                 Maximum="1"
+                                 Value="{Binding ProgressFraction, Mode=OneWay}"
+                                 Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+
+                <!-- Both actions only mean anything some of the time, so they only appear then. -->
+                <Button Grid.Column="2"
+                        Content="Show in folder"
+                        Style="{StaticResource SecondaryButton}"
+                        MinWidth="112"
+                        Margin="0,0,6,0"
+                        Command="{Binding ShowOutputFolderCommand}"
+                        Visibility="{Binding HasOutput, Converter={StaticResource BoolToVisibility}}" />
+
+                <Button Grid.Column="3"
+                        Content="Cancel"
+                        Style="{StaticResource SecondaryButton}"
+                        Margin="0"
+                        Command="{Binding CancelCommand}"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

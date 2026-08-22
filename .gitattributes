@@ -1,0 +1,18 @@
+# Normalise line endings on commit, check out native. Keeps diffs free of CRLF noise when the
+# same tree is touched from different machines.
+* text=auto
+
+*.cs        text diff=csharp
+*.csproj    text
+*.sln       text eol=crlf
+*.xaml      text
+*.xml       text
+*.pubxml    text
+*.json      text
+*.md        text
+
+*.pdf       binary
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.dll       binary

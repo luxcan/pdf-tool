@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>PdfTool</AssemblyName>
+    <RootNamespace>PdfTool.App</RootNamespace>
+    <!-- What Windows shows for the file itself. The assembly keeps its one-word name, because that
+         is an identifier; everything a person reads says PDF Tool. -->
+    <Product>PDF Tool</Product>
+    <AssemblyTitle>PDF Tool</AssemblyTitle>
+    <!-- Shown by Windows on the file, and by the About window. The same line the README leads with,
+         because the reason the tool exists is that the files never leave the machine. -->
+    <Description>Merge, split and compress PDFs on your own computer. Your files never leave it.</Description>
+    <!-- Embedding the icon in the executable is what gives the window and the taskbar theirs too:
+         no window sets Icon explicitly, so WPF falls back to the one on the file. -->
+    <ApplicationIcon>Resources\PdfTool.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfTool.Core\PdfTool.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The About window says when this build was made, and the assembly is the only thing that can
+         answer that truthfully: the version alone does not distinguish two builds of one tag. -->
+    <AssemblyMetadata Include="BuildDate" Value="$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd'))" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The smoke tests drive the real window and view model, both of which are internal. -->
+    <InternalsVisibleTo Include="PdfTool.App.Tests" />
+  </ItemGroup>
+
+  <!-- Native packages ship their own symbol files, which land beside the executable and break the
+       single-file requirement. They are not reference-related files, so DebugType alone misses them. -->
+  <Target Name="ExcludeSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- WPF ships no virtualizing panel that wraps, and the page grid must virtualize to stay
+         usable on documents with hundreds of pages. -->
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.5.4" />
+  </ItemGroup>
+
+</Project>

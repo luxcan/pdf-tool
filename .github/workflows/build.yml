@@ -1,0 +1,120 @@
+name: Build
+
+# WPF and the net9.0-windows target only build on Windows, so every job here runs on a Windows
+# runner. Those are billed at a higher rate than Linux, which is why the workflow builds once and
+# reuses the result rather than repeating work per step.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    # Only the release step needs more than read, and only on a tag.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-
+
+      - name: Restore
+        run: dotnet restore PdfTool.sln
+
+      - name: Build
+        run: dotnet build PdfTool.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test PdfTool.sln -c Release --no-build --verbosity normal
+
+      # A tagged build carries the tag as its version; every other build keeps the project default.
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = if ("${{ github.ref_type }}" -eq "tag") { $tag.TrimStart("v") } else { "" }
+          "value=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Publish single file
+        run: >
+          dotnet publish PdfTool.App -c Release -p:PublishProfile=win-x64
+          ${{ steps.version.outputs.value && format('-p:Version={0}', steps.version.outputs.value) || '' }}
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: PdfTool-win-x64
+          path: PdfTool.App/bin/publish/win-x64/PdfTool.exe
+          if-no-files-found: error
+
+      # Tagging is the signal to publish, and a tag that has been moved republishes. Creating a
+      # release that already exists is an error, so without this a re-tagged build would go green
+      # while the previous executable stayed attached to it. gh ships on the runner.
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A missing release is an answer, not a failure, so exit codes are read rather than thrown.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $tag = '${{ github.ref_name }}'
+          $exe = 'PdfTool.App/bin/publish/win-x64/PdfTool.exe'
+          $notes = 'release-notes.md'
+
+          # An annotated tag already describes its release, in words written for someone deciding
+          # whether to download it. Only a lightweight tag falls back to the generated list of
+          # commits, which on a repository with one tag amounts to a bare link.
+          #
+          # Asked through the API rather than through git: the checkout leaves the tag behind as a
+          # lightweight one, and git's %(contents) answers for a lightweight tag with the commit
+          # message. That substitution is silent, and it published a commit message as the notes.
+          $annotation = (gh api "repos/${{ github.repository }}/git/ref/tags/$tag" `
+            --jq 'select(.object.type == "tag") | .object.sha' | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not read the tag $tag." }
+
+          if ($annotation) {
+            gh api "repos/${{ github.repository }}/git/tags/$annotation" --jq .message |
+              Out-File -FilePath $notes -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { throw "Could not read the annotation on $tag." }
+          }
+          else {
+            gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name=$tag --jq .body |
+              Out-File -FilePath $notes -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { throw "Could not write notes for $tag." }
+          }
+
+          gh release view $tag *> $null
+
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $exe --title $tag --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish $tag." }
+            exit 0
+          }
+
+          # Replacing rather than deleting and recreating keeps the release itself: its address, and
+          # the date it was first published. The executable is a new asset either way, so its own
+          # download count starts again.
+          gh release upload $tag $exe --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not replace the executable on $tag." }
+
+          gh release edit $tag --title $tag --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw "Could not update $tag." }
