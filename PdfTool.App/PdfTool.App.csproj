@@ -12,6 +12,11 @@
          is an identifier; everything a person reads says PDF Tool. -->
     <Product>PDF Tool</Product>
     <AssemblyTitle>PDF Tool</AssemblyTitle>
+    <!-- What a build calls itself when nothing overrides it. A tagged build is handed
+         -p:Version=<tag> by CI, so this and the tag have to be moved together; stating it here is
+         what keeps a local build from quietly disagreeing with the release it was cut from. The SDK
+         appends the commit, which is what the About window reads back. -->
+    <Version>1.0.0</Version>
     <!-- Shown by Windows on the file, and by the About window. The same line the README leads with,
          because the reason the tool exists is that the files never leave the machine. -->
     <Description>Merge, split and compress PDFs on your own computer. Your files never leave it.</Description>
